@@ -88,7 +88,8 @@ class Agent:
     def __init__(self, agent_id: int):
         self.agent_id = agent_id
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        self.input_channels = 8
+        self.input_channels = 7
+        self.aux_dim = 3
         self.num_actions = 6
         
         # Thiết lập mốc thời gian an toàn
@@ -96,36 +97,62 @@ class Agent:
         self.max_mcts_depth = 3       
 
         # Khởi tạo mạng DQN để làm hàm đánh giá trực giác cho MCTS
-        self.rl_net = DQN(self.input_channels, self.num_actions).to(self.device)
+        self.rl_net = DQN(
+            map_shape=(7, 13, 13),
+            aux_dim=3,
+            output_dim=6
+        ).to(self.device)
         self.rl_net.eval()
         
         # Nạp trọng số thu được từ file train.py (phải đặt cùng thư mục file zip)
-        model_path = os.path.join(os.path.dirname(__file__), "model.pth")
+        model_path = os.path.join(os.path.dirname(__file__), "best_model.pth")
         if os.path.exists(model_path):
             try:
                 self.rl_net.load_state_dict(torch.load(model_path, map_location=self.device))
             except Exception:
                 pass
 
-    def _preprocess_obs(self, obs: dict) -> torch.Tensor:
-        state_grid = np.zeros((self.input_channels, 13, 13), dtype=np.float32)
-        game_map = obs['map']
+    def _preprocess_obs(self, obs):
+        state_grid = np.zeros((7, 13, 13), dtype=np.float32)
+
+        game_map = obs["map"]
+
         for i in range(5):
             state_grid[i] = (game_map == i).astype(np.float32)
-        for p_id, player in enumerate(obs['players']):
+
+        for p_id, player in enumerate(obs["players"]):
             if player[2] == 1:
-                state_grid[5 if p_id == self.agent_id else 6][player[0]][player[1]] = 1.0
-        if obs['bombs'].size > 0:
-            for bomb in obs['bombs']:
-                state_grid[7][int(bomb[0])][int(bomb[1])] = (8.0 - float(bomb[2])) / 7.0
+                state_grid[
+                    5 if p_id == self.agent_id else 6
+                ][player[0]][player[1]] = 1.0
+
         return torch.FloatTensor(state_grid).unsqueeze(0).to(self.device)
 
+    def _get_aux_features(self, obs):
+        me = obs["players"][self.agent_id]
+
+        bombs_left = float(me[3])
+        radius_bonus = float(me[4])
+
+        normalized_step = 0.0
+
+        return torch.tensor(
+            [[
+                bombs_left,
+                radius_bonus,
+                normalized_step
+            ]],
+            dtype=torch.float32,
+            device=self.device,
+        )
     def _evaluate_via_rl(self, obs: dict) -> float:
         if obs['players'][self.agent_id][2] == 0: 
             return -20.0
-        tensor_state = self._preprocess_obs(obs)
+        map_tensor = self._preprocess_obs(obs)
+        aux_tensor = self._get_aux_features(obs)
+
         with torch.no_grad():
-            q_values = self.rl_net(tensor_state)
+            q_values = self.rl_net(map_tensor, aux_tensor)
         return torch.max(q_values).item()
 
     def _uct_select(self, node: MCTSNode, c=1.414) -> int:
