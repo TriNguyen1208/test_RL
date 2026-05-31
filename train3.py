@@ -372,26 +372,35 @@ if __name__ == "__main__":
                 actions = [action_0, action_1, action_2, action_3]
 
                 next_obs, terminated, truncated = env.step(actions)
-                done = terminated or truncated
+                
+                # Cập nhật trạng thái done THẬT của môi trường
+                game_over = terminated or truncated
 
+                # Tính reward step bình thường (không tính phần thưởng thắng/thua ở đây nữa)
                 reward = my_trainer.shape_reward(obs, action_0, next_obs)
-
-                if done:
-                    alive_final = [bool(p[2]) for p in next_obs["players"]]
-                    survivors = [i for i in range(4) if alive_final[i]]
-
-                    # Thua trận/Thắng trận cuối cùng (Giảm bớt hình phạt từ -5.0 xuống -2.0)
-                    if len(survivors) == 1 and survivors[0] == 0:
-                        reward += 5.0
-                    else:
-                        reward -= 2.0
-
-                episode_reward += reward
 
                 next_map_grid, next_aux_vector = my_trainer.preprocess_obs(
                     next_obs, current_step=step + 1
                 )
 
+                # KIỂM TRA NẾU TRẬN ĐẤU THỰC SỰ KẾT THÚC (Do có người thắng hoặc hết step)
+                if game_over or (step + 1 >= max_steps):
+                    alive_final = [bool(p[2]) for p in next_obs["players"]]
+                    survivors = [i for i in range(4) if alive_final[i]]
+
+                    # Thắng trận tuyệt đối (Chỉ còn mình mình sống)
+                    if len(survivors) == 1 and survivors[0] == 0:
+                        reward += 5.0
+                    # Hòa trận do hết giờ (Có nhiều hơn 1 người sống bao gồm mình)
+                    elif len(survivors) > 1 and 0 in survivors:
+                        reward -= 2.0  # Phạt hòa trận khi hết giờ
+                    # Thua trận (Mình đã chết)
+                    else:
+                        reward -= 2.0
+
+                episode_reward += reward
+
+                # Đẩy vào memory với trạng thái done chính xác
                 my_trainer.memory.push(
                     map_grid,
                     aux_vector,
@@ -399,22 +408,27 @@ if __name__ == "__main__":
                     reward,
                     next_map_grid,
                     next_aux_vector,
-                    done,
+                    game_over,  # Đảm bảo lưu đúng trạng thái kết thúc
                 )
+                
                 obs = next_obs
                 step += 1
 
+                # Đồng thời cập nhật biến done để thoát while nếu game_over=True
+                done = game_over
+
+                # Huấn luyện mạng Neural qua từng step
                 my_trainer.train_step()
 
-            # Ghi nhận kết quả trận đấu
+            # --- SAU KHI THOÁT WHILE: Ghi nhận kết quả chính xác để làm báo cáo ---
             alive_final = [bool(p[2]) for p in obs["players"]]
             survivors = [i for i in range(4) if alive_final[i]]
             if len(survivors) == 1 and survivors[0] == 0:
                 is_win = "Y"
-            elif len(survivors) == 1:
-                is_win = "N"
+            elif len(survivors) > 1 and 0 in survivors:
+                is_win = "D"  # Đánh dấu chính xác trận Hòa (Draw)
             else:
-                is_win = "D"
+                is_win = "N"
 
             win_history.append(is_win)
             reward_history.append(episode_reward)
@@ -436,24 +450,17 @@ if __name__ == "__main__":
             # In báo cáo định kỳ mỗi 100 episodes
             if episode % 100 == 0:
                 avg_win_rate = (win_history.count("Y") / len(win_history)) * 100
+                avg_draw_rate = (win_history.count("D") / len(win_history)) * 100
                 avg_reward = np.mean(reward_history)
                 avg_survival = np.mean(survival_history)
 
-                print(
-                    f"\n================ BÁO CÁO PHONG ĐỘ (TRẬN {episode}) ================"
-                )
+                print(f"\n================ BÁO CÁO PHONG ĐỘ (TRẬN {episode}) ================")
                 print(f"* Tỷ lệ khám phá (Epsilon)   : {my_trainer.epsilon:.4f}")
-                print(
-                    f"* Kích thước bộ nhớ (Memory) : {len(my_trainer.memory)}/50000"
-                )
-                print(f"* TỶ LỆ THẮNG (100 trận gần nhất) : {avg_win_rate:.2f}%")
-                print(
-                    f"* SỐ STEP SỐNG SÓT TRUNG BÌNH: {avg_survival:.1f}/{max_steps}"
-                )
+                print(f"* Kích thước bộ nhớ (Memory) : {len(my_trainer.memory)}/50000")
+                print(f"* TỶ LỆ THẮNG - HÒA (100 trận): Tốt: {avg_win_rate:.2f}% | Hòa: {avg_draw_rate:.2f}%")
+                print(f"* SỐ STEP SỐNG SÓT TRUNG BÌNH: {avg_survival:.1f}/{max_steps}")
                 print(f"* ĐIỂM THƯỞNG TRUNG BÌNH     : {avg_reward:.2f}")
-                print(
-                    "================================================================\n"
-                )
+                print("================================================================\n")
                 my_trainer.save_model("last_model.pth")
 
             pbar.update(1)
