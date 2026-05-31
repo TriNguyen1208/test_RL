@@ -190,63 +190,87 @@ class LocalTrainer:
         return torch.argmax(q_values, dim=1).item()
 
     def shape_reward(self, obs_old, action, obs_new):
-        """THAY ĐỔI: Điều chỉnh lại trọng số reward.
-
-        Giảm hình phạt tiêu cực quá đà, tăng phần thưởng chủ động (phá box,
-        áp sát).
-        """
         reward = 0.0
 
         my_old = obs_old["players"][self.agent_id]
         my_new = obs_new["players"][self.agent_id]
+        
+        my_old_pos = (my_old[0], my_old[1])
+        my_new_pos = (my_new[0], my_new[1])
 
-        # Chết đột ngột (Giảm từ -2.0 xuống -1.0)
+        # ĐỊNH NGHĨA VỊ TRÍ XUẤT PHÁT CỐ ĐỊNH THEO ID (Cập nhật từ thông tin của bạn)
+        spawn_positions = {
+            0: (1, 1),    # Trên - Trái
+            1: (11, 11),  # Dưới - Phải
+            2: (1, 11),   # Trên - Phải
+            3: (11, 1)    # Dưới - Trái
+        }
+        my_spawn = spawn_positions[self.agent_id]
+
+        # 1. Trạng thái cơ bản
         if my_old[2] == 1 and my_new[2] == 0:
-            return -1.0
+            return -1.0  # Chết
+        reward += 0.005  # Thưởng sống sót
 
-        # Khuyến khích sống sót từng step
-        reward += 0.005
+        # 2. Phạt đứng im hoặc đâm đầu vào tường
+        if my_old_pos == my_new_pos:
+            if action != 5:
+                if action in [1, 2, 3, 4]:
+                    reward -= 0.02  # Đâm tường
+                else:
+                    reward -= 0.01  # Đứng im
 
-        # Nhặt item tăng bán kính / tăng bom
-        if my_new[4] > my_old[4]:
-            reward += 0.1
-        if my_new[3] > my_old[3]:
-            reward += 0.1
+        # 3. PHẠT CHIẾN THUẬT: Né góc chết (Tránh lùi sâu vào góc xuất phát vô nghĩa)
+        # Tính khoảng cách Manhattan tới góc xuất phát
+        old_dist_to_spawn = abs(my_old_pos[0] - my_spawn[0]) + abs(my_old_pos[1] - my_spawn[1])
+        new_dist_to_spawn = abs(my_new_pos[0] - my_spawn[0]) + abs(my_new_pos[1] - my_spawn[1])
+        
+        # Nếu bot đang ở gần góc (khoảng cách <= 2) mà lại chủ động đi lùi sát vào góc hơn nữa
+        if new_dist_to_spawn < old_dist_to_spawn and new_dist_to_spawn <= 1:
+            reward -= 0.03 # Phạt lùi vào góc chết tự bẫy
 
-        # Địch chết
-        old_enemy_alive = sum(
-            p[2] for i, p in enumerate(obs_old["players"]) if i != self.agent_id
-        )
-        new_enemy_alive = sum(
-            p[2] for i, p in enumerate(obs_new["players"]) if i != self.agent_id
-        )
-        killed = old_enemy_alive - new_enemy_alive
-        if killed > 0:
-            reward += killed * 1.0  # Tăng từ 0.5 lên 1.0
+        # 4. Thưởng ăn item
+        if my_new[4] > my_old[4]: reward += 0.1
+        if my_new[3] > my_old[3]: reward += 0.1
 
-        # Phá hủy Box (Tăng từ 0.02 lên 0.1 để bot chủ động nổ bom cày cuốc)
+        # 5. THƯỞNG CHIẾN THUẬT: Khuyến khích phá gạch mở đường
         old_boxes = np.sum(obs_old["map"] == 2)
         new_boxes = np.sum(obs_new["map"] == 2)
         destroyed_boxes = old_boxes - new_boxes
+        
         if destroyed_boxes > 0:
-            reward += destroyed_boxes * 0.1
+            # Nếu bản đồ còn rất nhiều gạch (chứng tỏ đây là những ô gạch đầu trận)
+            # Thưởng cực đậm để Bot học được cách "mở lối đi riêng" thoát khỏi vùng 2x2
+            if old_boxes > 50: 
+                reward += destroyed_boxes * 0.3  # Thưởng lớn cho ô gạch đầu trận
+            else:
+                reward += destroyed_boxes * 0.1  # Thưởng bình thường cho giai đoạn sau
 
-        # Đặt bom gần địch (Tăng nhẹ để kích thích tấn công)
+        # 6. Đặt bom có mục tiêu (Giữ nguyên logic quét chữ thập)
         if action == 5 and my_old[3] > 0:
-            my_r = my_old[0]
-            my_c = my_old[1]
-            min_dist = 999
-
-            for i, p in enumerate(obs_old["players"]):
-                if i == self.agent_id or p[2] == 0:
-                    continue
-                dist = abs(my_r - p[0]) + abs(my_c - p[1])
-                min_dist = min(min_dist, dist)
-
-            if min_dist <= 2:
-                reward += 0.1
-            elif min_dist <= 4:
+            has_target = False
+            my_r, my_c = my_old_pos
+            current_radius = int(my_old[4]) + 1
+            
+            for d_r, d_c in [(-1,0), (1,0), (0,-1), (0,1)]:
+                for step_dist in range(1, current_radius + 1):
+                    nr, nc = my_r + d_r * step_dist, my_c + d_c * step_dist
+                    if 0 <= nr < 13 and 0 <= nc < 13:
+                        if obs_old["map"][nr][nc] == 1: break
+                        if obs_old["map"][nr][nc] == 2:
+                            has_target = True
+                            break
+            if has_target:
                 reward += 0.05
+            else:
+                reward -= 0.05  # Phạt đặt bom lãng phí ở góc trống an toàn
+
+        # 7. Thưởng giết địch
+        old_enemy_alive = sum(p[2] for i, p in enumerate(obs_old["players"]) if i != self.agent_id)
+        new_enemy_alive = sum(p[2] for i, p in enumerate(obs_new["players"]) if i != self.agent_id)
+        killed = old_enemy_alive - new_enemy_alive
+        if killed > 0:
+            reward += killed * 1.0
 
         return reward
 
