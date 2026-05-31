@@ -330,11 +330,11 @@ if __name__ == "__main__":
 
                     # Win
                     if len(survivors) == 1 and survivors[0] == 0:
-                        reward += 3.0
+                        reward += 5.0
 
                     # Lose
-                    elif len(survivors) == 1:
-                        reward -= 3.0
+                    else:
+                        reward -= 5.0
 
                 episode_reward += reward
 
