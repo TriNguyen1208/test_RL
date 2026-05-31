@@ -144,14 +144,77 @@ class LocalTrainer:
 
     def shape_reward(self, obs_old, action, obs_new):
         reward = 0.0
-        my_old = obs_old['players'][self.agent_id]
-        my_new = obs_new['players'][self.agent_id]
-        
-        if my_new[2] == 0: return -30.0
-        reward += 0.005
-        
-        if my_new[4] > my_old[4]: reward += 2.0
-        if my_new[3] > my_old[3]: reward += 2.0
+
+        my_old = obs_old["players"][self.agent_id]
+        my_new = obs_new["players"][self.agent_id]
+
+        # Chết
+        if my_old[2] == 1 and my_new[2] == 0:
+            return -0.5
+
+        # Sống sót
+        reward += 0.001
+
+        # Nhặt item tăng bán kính
+        if my_new[4] > my_old[4]:
+            reward += 0.05
+
+        # Nhặt item tăng bomb
+        if my_new[3] > my_old[3]:
+            reward += 0.05
+
+        # Địch chết
+        old_enemy_alive = sum(
+            p[2]
+            for i, p in enumerate(obs_old["players"])
+            if i != self.agent_id
+        )
+
+        new_enemy_alive = sum(
+            p[2]
+            for i, p in enumerate(obs_new["players"])
+            if i != self.agent_id
+        )
+
+        killed = old_enemy_alive - new_enemy_alive
+
+        if killed > 0:
+            reward += killed * 0.5
+
+        # Box bị phá
+        old_boxes = np.sum(obs_old["map"] == 2)
+        new_boxes = np.sum(obs_new["map"] == 2)
+
+        destroyed_boxes = old_boxes - new_boxes
+
+        if destroyed_boxes > 0:
+            reward += destroyed_boxes * 0.02
+
+        # Đặt bomb gần địch
+        if action == 5 and my_old[3] > 0:
+
+            my_r = my_old[0]
+            my_c = my_old[1]
+
+            min_dist = 999
+
+            for i, p in enumerate(obs_old["players"]):
+                if i == self.agent_id:
+                    continue
+
+                if p[2] == 0:
+                    continue
+
+                dist = abs(my_r - p[0]) + abs(my_c - p[1])
+
+                min_dist = min(min_dist, dist)
+
+            if min_dist <= 2:
+                reward += 0.05
+
+            elif min_dist <= 4:
+                reward += 0.02
+
         return reward
 
     def train_step(self):
@@ -223,7 +286,7 @@ if __name__ == "__main__":
     btc_bot_2 = BoxFarmerAgent(2)
     btc_bot_3 = SimpleRuleAgent(3)
     
-    win_history = deque(maxlen=100)       
+    win_history = deque(maxlen=10)       
     reward_history = deque(maxlen=100)    
     survival_history = deque(maxlen=100)  
     best_winrate = -1
@@ -255,42 +318,65 @@ if __name__ == "__main__":
                 done = terminated or truncated
                 
                 # --- BƯỚC 3: Tính toán obs mới và lưu cặp trạng thái kép vào Buffer ---
-                if obs["players"][0][2] == 1:
-                    reward = my_trainer.shape_reward(obs, action_0, next_obs)
-                    if done:
-                        alive_final = [bool(p[2]) for p in next_obs["players"]]
-                        survivors = [i for i in range(4) if alive_final[i]]
+                reward = my_trainer.shape_reward(
+                    obs,
+                    action_0,
+                    next_obs
+                )
 
-                        # Win
-                        if len(survivors) == 1 and survivors[0] == 0:
-                            reward += 100.0
+                if done:
+                    alive_final = [bool(p[2]) for p in next_obs["players"]]
+                    survivors = [i for i in range(4) if alive_final[i]]
 
-                        # Lose
-                        elif len(survivors) == 1:
-                            reward -= 20.0
+                    # Win
+                    if len(survivors) == 1 and survivors[0] == 0:
+                        reward += 2.0
 
-                        # Draw
-                        else:
-                            reward += 10.0
-                    episode_reward += reward
-                    
-                    # Tạo cặp dữ liệu tương lai cho bước học kế tiếp
-                    next_map_grid, next_aux_vector = my_trainer.preprocess_obs(next_obs, current_step=step+1)
-                    
-                    # Đẩy toàn bộ 7 tham số MDP của cấu trúc đa nhánh vào bộ nhớ
-                    my_trainer.memory.push(map_grid, aux_vector, action_0, reward, 
-                                        next_map_grid, next_aux_vector, done)
-                
+                    # Lose
+                    elif len(survivors) == 1:
+                        reward -= 2.0
+
+                    # Draw
+                    else:
+                        reward += 0.5
+
+                episode_reward += reward
+
+                next_map_grid, next_aux_vector = my_trainer.preprocess_obs(
+                    next_obs,
+                    current_step=step + 1
+                )
+
+                my_trainer.memory.push(
+                    map_grid,
+                    aux_vector,
+                    action_0,
+                    reward,
+                    next_map_grid,
+                    next_aux_vector,
+                    done
+                )
                 obs = next_obs
                 step += 1
                 
                 # --- BƯỚC 4: Huấn luyện mạng Neural qua từng step ---
                 my_trainer.train_step()
+
                 
             # --- BƯỚC 5: Ghi nhận thông tin và in báo cáo phong độ ---
             alive_final = [bool(p[2]) for p in obs["players"]]
             survivors = [i for i in range(4) if alive_final[i]]
-            is_win = 1 if (len(survivors) == 1 and survivors[0] == 0) else 0
+            # Win
+            if len(survivors) == 1 and survivors[0] == 0:                    
+                is_win = "Y"
+
+            # Lose
+            elif len(survivors) == 1:
+                is_win = "N"
+
+            # Draw
+            else:
+                is_win = "D"
             win_history.append(is_win)
             reward_history.append(episode_reward)
             survival_history.append(step) 
@@ -302,16 +388,21 @@ if __name__ == "__main__":
                 )
                 
             # Chỉ bắt đầu đánh giá sau khi đủ 100 trận
-            if len(win_history) >= 100:
-                current_winrate = np.mean(list(win_history)[-100:])
+            if len(win_history) >= 10:
+                current_winrate = (
+                    win_history.count("Y") / len(win_history)
+                )
 
                 if current_winrate > best_winrate:
                     best_winrate = current_winrate
                     my_trainer.save_model("best_model.pth")
 
             # Checkpoint định kỳ
-            if episode % 100 == 0:
-                avg_win_rate = np.mean(win_history) * 100       # Tỷ lệ thắng trung bình (%)
+            if episode % 10 == 0:
+                avg_win_rate = (
+                    win_history.count("Y") / len(win_history)
+                ) * 100 # Tỷ lệ thắng trung bình (%)
+                # avg_win_rate = np.mean(win_history) * 100       
                 avg_reward = np.mean(reward_history)            # Điểm thưởng trung bình nhận được
                 avg_survival = np.mean(survival_history)        # Số bước sống sót trung bình
                 
@@ -325,4 +416,4 @@ if __name__ == "__main__":
                 my_trainer.save_model("last_model.pth")
             pbar.update(1)
             # pbar.set_postfix(step=f"{step:.2f}", episode_reward=f"{episode_reward:.3f}", win=f"{"YES" if is_win else "NO"}", memory=f"{len(my_trainer.memory)}/50000", epsilon=f"{my_trainer.epsilon:.3f}")
-            pbar.set_postfix(st=f"{step}", re=f"{episode_reward:.2f}", win=f"{"Y" if is_win else "N"}")
+            pbar.set_postfix(st=f"{step}", re=f"{episode_reward:.2f}", win=f"{is_win}")
