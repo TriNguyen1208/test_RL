@@ -163,7 +163,7 @@ if __name__ == "__main__":
     reward_history = deque(maxlen=100)    # Lưu tổng điểm thưởng tự chế nhận được trong 100 trận gần nhất
     survival_history = deque(maxlen=100)  # Lưu số step sống sót trước khi chết trong 100 trận gần nhất
     print("=== Khởi động hệ thống huấn luyện thực tế với Bot BTC ===")
-    
+    best_winrate = -1
     with tqdm(total=num_episodes, desc="Training DQN") as pbar:
         for episode in range(num_episodes):
             # Tính toán seed biến đổi theo từng trận giống hệt cách BTC làm
@@ -220,24 +220,21 @@ if __name__ == "__main__":
                 
             # Cứ sau 10 trận đấu: Tiến hành đồng bộ hóa trọng số từ mạng chính sang mạng mục tiêu (Target Net)
             if episode % 10 == 0:
-                my_trainer.target_net.load_state_dict(my_trainer.policy_net.state_dict())
+                my_trainer.target_net.load_state_dict(
+                    my_trainer.policy_net.state_dict()
+                )
                 
-            # Cứ sau 100 trận đấu: In một bảng BÁO CÁO PHONG ĐỘ chi tiết ra màn hình để bạn đánh giá
+            # Chỉ bắt đầu đánh giá sau khi đủ 200 trận
+            if len(win_history) >= 200:
+                current_winrate = np.mean(list(win_history)[-200:])
+
+                if current_winrate > best_winrate:
+                    best_winrate = current_winrate
+                    my_trainer.save_model("best_model.pth")
+
+            # Checkpoint định kỳ
             if episode % 100 == 0:
-                # avg_win_rate = np.mean(win_history) * 100       # Tỷ lệ thắng trung bình (%)
-                # avg_reward = np.mean(reward_history)            # Điểm thưởng trung bình nhận được
-                # avg_survival = np.mean(survival_history)        # Số bước sống sót trung bình
-                
-                # print(f"\n================ BÁO CÁO PHONG ĐỘ (TRẬN {episode}) ================")
-                # print(f"* Tỷ lệ khám phá (Epsilon)   : {my_trainer.epsilon:.4f}")
-                # print(f"* Kích thước bộ nhớ (Memory) : {len(my_trainer.memory)}/50000")
-                # print(f"* TỶ LỆ THẮNG (100 trận gần) : {avg_win_rate:.2f}%")
-                # print(f"* SỐ STEP SỐNG SÓT TRUNG BÌNH: {avg_survival:.1f}/{max_steps}")
-                # print(f"* ĐIỂM THƯỞNG TRUNG BÌNH     : {avg_reward:.2f}")
-                # print("================================================================\n")
-                
-                # # Xuất file trọng số an toàn xuống ổ đĩa, sẵn sàng để lấy file này đem đi nộp bài
-                my_trainer.save_model("model.pth")
+                my_trainer.save_model("latest_model.pth")
             pbar.update(1)
             # pbar.set_postfix(step=f"{step:.2f}", episode_reward=f"{episode_reward:.3f}", win=f"{"YES" if is_win else "NO"}", memory=f"{len(my_trainer.memory)}/50000", epsilon=f"{my_trainer.epsilon:.3f}")
             pbar.set_postfix(st=f"{step}", re=f"{episode_reward:.3f}", win=f"{"Y" if is_win else "N"}")
