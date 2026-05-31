@@ -150,7 +150,7 @@ class LocalTrainer:
 
         # Chết
         if my_old[2] == 1 and my_new[2] == 0:
-            return -0.5
+            return -2.0
 
         # Sống sót
         reward += 0.001
@@ -330,15 +330,11 @@ if __name__ == "__main__":
 
                     # Win
                     if len(survivors) == 1 and survivors[0] == 0:
-                        reward += 2.0
+                        reward += 3.0
 
                     # Lose
                     elif len(survivors) == 1:
-                        reward -= 2.0
-
-                    # Draw
-                    else:
-                        reward += 0.5
+                        reward -= 3.0
 
                 episode_reward += reward
 
