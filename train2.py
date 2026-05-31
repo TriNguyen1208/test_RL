@@ -286,7 +286,7 @@ if __name__ == "__main__":
     btc_bot_2 = BoxFarmerAgent(2)
     btc_bot_3 = SimpleRuleAgent(3)
     
-    win_history = deque(maxlen=10)       
+    win_history = deque(maxlen=100)       
     reward_history = deque(maxlen=100)    
     survival_history = deque(maxlen=100)  
     best_winrate = -1
@@ -388,7 +388,7 @@ if __name__ == "__main__":
                 )
                 
             # Chỉ bắt đầu đánh giá sau khi đủ 100 trận
-            if len(win_history) >= 10:
+            if len(win_history) >= 100:
                 current_winrate = (
                     win_history.count("Y") / len(win_history)
                 )
@@ -398,7 +398,7 @@ if __name__ == "__main__":
                     my_trainer.save_model("best_model.pth")
 
             # Checkpoint định kỳ
-            if episode % 10 == 0:
+            if episode % 100 == 0:
                 avg_win_rate = (
                     win_history.count("Y") / len(win_history)
                 ) * 100 # Tỷ lệ thắng trung bình (%)
