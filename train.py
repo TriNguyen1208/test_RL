@@ -239,4 +239,5 @@ if __name__ == "__main__":
                 # # Xuất file trọng số an toàn xuống ổ đĩa, sẵn sàng để lấy file này đem đi nộp bài
                 my_trainer.save_model("model.pth")
             pbar.update(1)
-            pbar.set_postfix(step=f"{step:.2f}", episode_reward=f"{episode_reward:.3f}", win=f"{"YES" if is_win else "NO"}", memory=f"{len(my_trainer.memory)}/50000", epsilon=f"{my_trainer.epsilon:.3f}")
+            # pbar.set_postfix(step=f"{step:.2f}", episode_reward=f"{episode_reward:.3f}", win=f"{"YES" if is_win else "NO"}", memory=f"{len(my_trainer.memory)}/50000", epsilon=f"{my_trainer.epsilon:.3f}")
+            pbar.set_postfix(step=f"{step:.2f}", episode_reward=f"{episode_reward:.3f}", win=f"{"YES" if is_win else "NO"}")
